@@ -1,0 +1,12 @@
+[toolchain]
+channel = "1.78.0"
+profile = "default"
+components = [ 
+  "rustfmt",  
+  "rust-src" 
+]
+
+targets = [
+  "wasm32-wasi",
+]
+

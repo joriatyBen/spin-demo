@@ -1,8 +1,9 @@
 use spin_sdk::http::{Response, Request};
 use spin_sdk::{http_component, pg::{self, Decode, ParameterValue}};
 use anyhow::{anyhow, Result};
-use serde_json::json;
+//use serde_json::json;
 use std::error::Error;
+use chrono::prelude::*;
 
 
 // The environment variable set in `spin.toml` that points to the
@@ -38,9 +39,14 @@ struct Order {
 
 #[http_component]
 async fn hello_world(req: Request) -> Result<Response, Box<dyn Error>> {
+
+    let start_time: DateTime<Utc> = Utc::now();
+
     match serde_json::from_slice::<Order>(req.body().as_ref()) {
         Ok(order) => {
-            let response_body = format!("New order: {:?}", order);
+            //let response_body = format!("New order: {:?}", order);
+            let result = handle_order(order, start_time).expect("HOLY FUCK");
+            let end_time: DateTime<Utc> = Utc::now();
             Ok(Response::builder()
                 .status(200)
                 .header("content-type", "application/json")
@@ -48,7 +54,8 @@ async fn hello_world(req: Request) -> Result<Response, Box<dyn Error>> {
                 .header("Access-Control-Allow-Methods", "POST")
                 .header("Access-Control-Allow-Headers", "Content-Type")
                 //.body(response_body)
-                .body(format!("{:?}", check_article_quantity(order).unwrap()))
+                //.body(format!("{:?}", handle_order(order, start_time).unwrap()))
+                .body(format!("Execution time: {}, result: {:?}", start_time - end_time, result))
                 .build())
         }
         Err(e) => {
@@ -65,12 +72,11 @@ async fn hello_world(req: Request) -> Result<Response, Box<dyn Error>> {
     }
 }
 
-fn get_product_quantity(conn: &pg::Connection, article: Cart) -> Result<i32> {
+fn get_product_quantity(conn: &pg::Connection, article: &Cart) -> Result<i32> {
     println!("ARTICLE NAME: {}", article.name);
     let sql =
-        format!("SELECT quantity FROM products.\"products-details\" WHERE name = '{}' AND article_number = '{}'", article.name, article.id); // Welcome SQL-Injection!!!
+        format!("SELECT quantity FROM products.\"products-details\" WHERE name = '{}' AND article_number = '{}'", article.name, article.id); // Welcome to SQL-Injection!!!
     //let params = vec![ParameterValue::Str(article.name)]; // ParameterValue is not working - fix later
-
     let rowset = conn.query(&sql, &[])?;
 
     match rowset.rows.first() {
@@ -78,38 +84,57 @@ fn get_product_quantity(conn: &pg::Connection, article: Cart) -> Result<i32> {
         Some(row) => match row.first() {
             None => Ok(0),
             Some(pg::DbValue::Int32(i)) => Ok(*i),
-            Some(other) => Err(anyhow!(
-                "Unexpected"
-            )),
+            Some(other) => Err(anyhow!("Unexpected: {:?}", other)),
         },
     }
 }
 
-fn check_article_quantity(order: Order) -> Result<Vec<i32>> {
+fn handle_order(order: Order, start_time: DateTime<Utc>) -> Result<i32> {
     let address = std::env::var(DB_URL_ENV)?;
     let conn = pg::Connection::open(&address)?;
-    let mut ids = Vec::new();
+    let mut current_quantity = 0;
 
-    for article in order.checkout {
-        ids.push(get_product_quantity(&conn, article).expect("DID NOT EXPECT THAT"));
+    for article in &order.checkout {
+        current_quantity = get_product_quantity(&conn, article).expect("DID NOT EXPECT THAT") - article.quantity;
+        if current_quantity <= 0 {
+            println!("Insufficient stock for product: {:?}", article.name)
+        } else {
+            let sql = format!("UPDATE products.\"products-details\" SET quantity = '{}' WHERE name = '{}'", current_quantity, article.name);
+            let sql_execute = conn.query(&sql, &[])?;
+            println!("Product quantity updated: {:?}", sql_execute);
+        }
     }
-    Ok(ids)
+    insert_customer_data(&conn, order, start_time).expect("WHAT THE FUCK");
+    Ok(0)
+
 }
 
-// fn write_to_db(_req: Request<()>) -> Result<Response<String>> {
-//     let address = std::env::var(DB_URL_ENV)?;
-//     let conn = pg::Connection::open(&address)?;
-//
-//     let sql = "INSERT INTO articletest (title, content, authorname) VALUES (?, ?, ?, ?)";
-//     let nrow_executed = conn.execute(sql, &[])?;
-//
-//     println!("nrow_executed: {}", nrow_executed);
-//
-//     let sql = "SELECT COUNT(id) FROM articletest";
-//     let rowset = conn.query(sql, &[])?;
-//     let row = &rowset.rows[0];
-//     let count = i64::decode(&row[0])?;
-//     let response = format!("Count: {}\n", count);
-//
-//     Ok(http::Response::builder().status(200).body(response)?)
-// }
+fn insert_customer_data(conn: &pg::Connection, order: Order, start_time: DateTime<Utc>) -> Result<i32> {
+    let sql = format!("INSERT INTO products.\"customers\" (name, email, phone, address, city, pin, last_ordered) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}') ON CONFLICT (name, email) DO UPDATE SET last_ordered = EXCLUDED.last_ordered",
+                      order.customer.name,
+                      order.customer.email,
+                      order.customer.phone,
+                      order.customer.address,
+                      order.customer.city,
+                      order.customer.pin,
+                      start_time
+    );
+    let sql_execute = conn.execute(&sql, &[])?;
+    println!("Customer data added: {:?}", sql_execute);
+    Ok(0)
+}
+
+// fn insert_order_data(conn: &pg::Connection, order: Order, start_time: DateTime<Utc>) {
+//     let sql = format!("INSERT INTO products.\"orders\" (name, email, phone, address, city, pin, last_ordered) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}') \
+//     ON DUPLICATE KEY UPDATE last_ordered = VALUES(last_ordered)",
+//                       order.customer.name,
+//                       order.customer.email,
+//                       order.customer.phone,
+//                       order.customer.address,
+//                       order.customer.city,
+//                       order.customer.pin,
+//                       start_time
+//     );
+//     let sql_execute = conn.execute(&sql, &[])?;
+//     println!("CUSTOMER DATA ADDED: {:?}", sql_execute);
+//}

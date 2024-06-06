@@ -14,5 +14,6 @@ spin-sdk = "2.2.0"
 http = "1.0.0"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.96"
+chrono = "0.4"
 
 [workspace]

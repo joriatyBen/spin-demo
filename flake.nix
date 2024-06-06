@@ -28,6 +28,7 @@
           exec zsh
           '';
         RUST_LOG = "spin=trace";
+        WASMTIME_BACKTRACE_DETAILS = "1";
         };
       }
     );

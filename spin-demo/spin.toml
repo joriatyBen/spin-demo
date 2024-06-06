@@ -11,7 +11,7 @@ route = "/checkout"
 component = "spin-demo"
 
 [component.spin-demo]
-environment = { DB_URL = "host=127.0.0.1 user=myuser dbname=products password=p05tgr3$" }
+environment = { DB_URL = "host=localhost user=myuser password=p05tgr3$ dbname=products" }
 source = "target/wasm32-wasi/release/spin_demo.wasm"
 allowed_outbound_hosts = ["postgres://localhost:5432"]
 [component.spin-demo.build]

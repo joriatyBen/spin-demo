@@ -1,8 +1,6 @@
-use spin_sdk::http::{IntoResponse, Json, Response, Request};
-use spin_sdk::http::conversions::TryFromIncomingRequest;
-use spin_sdk::{http_component, pg::{self, Decode}};
-use anyhow::Result;
-use serde::Deserialize;
+use spin_sdk::http::{Response, Request};
+use spin_sdk::{http_component, pg::{self, Decode, ParameterValue}};
+use anyhow::{anyhow, Result};
 use serde_json::json;
 use std::error::Error;
 
@@ -21,28 +19,6 @@ struct Customer {
     pin: String,
 }
 
-impl TryFrom<&pg::Row> for Customer {
-    type Error = anyhow::Error;
-
-    fn try_from(row: &pg::Row) -> Result<Self, Self::Error> {
-        let name = String::decode(&row[0])?;
-        let email = String::decode(&row[1])?;
-        let phone = String::decode(&row[2])?;
-        let address = String::decode(&row[3])?;
-        let city = String::decode(&row[4])?;
-        let pin = String::decode(&row[5])?;
-
-        Ok(Self {
-            name,
-            email,
-            phone,
-            address,
-            city,
-            pin,
-        })
-    }
-}
-
 #[derive(serde::Deserialize, Debug)]
 struct Cart {
     id: i32,
@@ -52,31 +28,12 @@ struct Cart {
     quantity: i32,
 }
 
-impl TryFrom<&pg::Row> for Cart {
-    type Error = anyhow::Error;
-
-    fn try_from(row: &pg::Row) -> Result<Self, Self::Error> {
-        let id = i32::decode(&row[0])?;
-        let name = String::decode(&row[1])?;
-        let image = String::decode(&row[2])?;
-        let price = i32::decode(&row[3])?;
-        let quantity = i32::decode(&row[4])?;
-
-        Ok(Self {
-            id,
-            name,
-            image,
-            price,
-            quantity,
-        })
-    }
-}
-
 #[derive(serde::Deserialize, Debug)]
 struct Order {
     customer: Customer,
     checkout: Vec<Cart>,
-    orderTotal: String,
+    #[serde(rename(deserialize = "orderTotal"))]
+    order_total: String,
 }
 
 #[http_component]
@@ -90,7 +47,8 @@ async fn hello_world(req: Request) -> Result<Response, Box<dyn Error>> {
                 .header("Access-Control-Allow-Origin", "http://localhost:5173")
                 .header("Access-Control-Allow-Methods", "POST")
                 .header("Access-Control-Allow-Headers", "Content-Type")
-                .body(response_body)
+                //.body(response_body)
+                .body(format!("{:?}", check_article_quantity(order).unwrap()))
                 .build())
         }
         Err(e) => {
@@ -107,41 +65,37 @@ async fn hello_world(req: Request) -> Result<Response, Box<dyn Error>> {
     }
 }
 
-// fn read_from_db<T>(_req: Request<()>, dataset: T) -> Result<Response<String>> {
-//     let address = std::env::var(DB_URL_ENV)?;
-//     let conn = pg::Connection::open(&address)?;
-//
-//     let sql = "SELECT id, title, content, authorname, coauthor FROM articletest";
-//     let rowset = conn.query(sql, &[])?;
-//
-//     let column_summary = rowset
-//         .columns
-//         .iter()
-//         .map(format_col)
-//         .collect::<Vec<_>>()
-//         .join(", ");
-//
-//     let mut response_lines = vec![];
-//
-//     for row in rowset.rows {
-//         let article = Article::try_from(&row)?;
-//
-//         println!("article: {:#?}", article);
-//         response_lines.push(format!("article: {:#?}", article));
-//     }
-//
-//     // use it in business logic
-//
-//     let response = format!(
-//         "Found {} article(s) as follows:\n{}\n\n(Column info: {})\n",
-//         response_lines.len(),
-//         response_lines.join("\n"),
-//         column_summary,
-//     );
-//
-//     Ok(http::Response::builder().status(200).body(response)?)
-// }
-//
+fn get_product_quantity(conn: &pg::Connection, article: Cart) -> Result<i32> {
+    println!("ARTICLE NAME: {}", article.name);
+    let sql =
+        format!("SELECT quantity FROM products.\"products-details\" WHERE name = '{}' AND article_number = '{}'", article.name, article.id); // Welcome SQL-Injection!!!
+    //let params = vec![ParameterValue::Str(article.name)]; // ParameterValue is not working - fix later
+
+    let rowset = conn.query(&sql, &[])?;
+
+    match rowset.rows.first() {
+        None => Ok(0),
+        Some(row) => match row.first() {
+            None => Ok(0),
+            Some(pg::DbValue::Int32(i)) => Ok(*i),
+            Some(other) => Err(anyhow!(
+                "Unexpected"
+            )),
+        },
+    }
+}
+
+fn check_article_quantity(order: Order) -> Result<Vec<i32>> {
+    let address = std::env::var(DB_URL_ENV)?;
+    let conn = pg::Connection::open(&address)?;
+    let mut ids = Vec::new();
+
+    for article in order.checkout {
+        ids.push(get_product_quantity(&conn, article).expect("DID NOT EXPECT THAT"));
+    }
+    Ok(ids)
+}
+
 // fn write_to_db(_req: Request<()>) -> Result<Response<String>> {
 //     let address = std::env::var(DB_URL_ENV)?;
 //     let conn = pg::Connection::open(&address)?;

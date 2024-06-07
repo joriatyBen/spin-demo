@@ -3,7 +3,7 @@ kind: SpinApp
 metadata:
   name: spin-demo
 spec:
-  image: "ghcr.io/joriatyben/spin-demo:0.1.0"
+  image: "ghcr.io/joriatyben/spin-demo:0.2.0"
   imagePullSecrets:
     - name: ghcr
   executor: containerd-shim-spin

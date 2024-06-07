@@ -2,7 +2,7 @@ spin_manifest_version = 2
 
 [application]
 name = "spin-demo"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["benjamin.bajorat <benjamin.bajorat@mayflower.de>"]
 description = ""
 
@@ -11,9 +11,9 @@ route = "/checkout"
 component = "spin-demo"
 
 [component.spin-demo]
-environment = { DB_URL = "host=localhost user=myuser password=p05tgr3$ dbname=products" }
+environment = { DB_URL = "host=postgres-postgresql.postgres user=myuser password=p05tgr3$ dbname=products" }
 source = "target/wasm32-wasi/release/spin_demo.wasm"
-allowed_outbound_hosts = ["postgres://localhost:5432"]
+allowed_outbound_hosts = ["postgres://postgres-postgresql.postgres:5432"]
 [component.spin-demo.build]
 command = "cargo build --target wasm32-wasi --release"
 watch = ["src/**/*.rs", "Cargo.toml"]

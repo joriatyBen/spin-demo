@@ -1,10 +1,9 @@
 use spin_sdk::http::{Response, Request};
-use spin_sdk::{http_component, pg::{self, Decode, ParameterValue}};
+use spin_sdk::{http_component, pg::{self}};
 use anyhow::{anyhow, Result};
 use std::error::Error;
 use std::collections::HashMap;
 use chrono::prelude::*;
-use serde_json::json;
 
 // defined in spin.toml
 const DB_URL_ENV: &str = "DB_URL";
@@ -34,12 +33,25 @@ struct Order {
     checkout: Vec<Cart>,
     #[serde(rename(deserialize = "orderTotal"))]
     order_total: String,
+    #[serde(rename(deserialize = "orderState"))]
+    oder_state: OrderState
+}
+
+
+#[derive(serde::Deserialize, PartialEq, Debug)]
+enum OrderState {
+    Checkout,
+    Pending,
+    Processing,
+    Canceled,
+    Completed,
 }
 
 #[http_component]
 async fn order_request(req: Request) -> Result<Response, Box<dyn Error>> {
     let start_time: DateTime<Utc> = Utc::now();
     let mut ordered_products: HashMap<String, i32> = HashMap::new();
+
     match serde_json::from_slice::<Order>(req.body().as_ref()) {
         Ok(order) => {
             let result = handle_order(order, start_time, &mut ordered_products).expect("Handling order failed");
@@ -50,7 +62,7 @@ async fn order_request(req: Request) -> Result<Response, Box<dyn Error>> {
                 .header("Access-Control-Allow-Origin", "http://localhost:5173")
                 .header("Access-Control-Allow-Methods", "POST")
                 .header("Access-Control-Allow-Headers", "Content-Type")
-                .body(format!("Execution time: {}. Successfully ordered: {:?}", end_time - start_time, ordered_products))
+                .body(format!("Execution time: {}. Order: {:?}", end_time - start_time, result))
                 .build())
         }
         Err(e) => {
@@ -71,28 +83,33 @@ fn handle_order(
     order: Order,
     start_time: DateTime<Utc>,
     ordered_products: &mut HashMap<String, i32>
-) -> Result<i32> {
+) -> Result<OrderState> {
     let address = std::env::var(DB_URL_ENV)?;
     let conn = pg::Connection::open(&address)?;
-    let mut current_quantity = 0;
+    let mut current_order_state: OrderState = OrderState::Pending;
 
     for article in &order.checkout {
-        current_quantity =
+        let current_quantity =
             get_product_quantity(&conn, article).expect("Product quantity query failed") - article.quantity;
         if current_quantity <= 0 {
+            current_order_state = OrderState::Canceled;
             println!("Insufficient stock for product: {:?}", article.name)
         } else {
             let sql = format!("UPDATE products.\"products-details\" \
             SET quantity = '{}' WHERE name = '{}'", current_quantity, article.name);
-            let sql_execute = conn.query(&sql, &[])?;
+            conn.query(&sql, &[])?;
 
-            println!("Product quantity updated: {:?}", sql_execute);
             ordered_products.insert(article.name.clone(), article.quantity);
+            current_order_state = OrderState::Processing;
         }
     }
-    insert_customer_data(&conn, &order, start_time).expect("Customer data insert failed");
-    insert_order_data(&conn, &order, ordered_products, start_time).expect("Order data insert failed");
-    Ok(0)
+
+    if current_order_state == OrderState::Processing {
+        insert_customer_data(&conn, &order, start_time).expect("Customer data insert failed");
+        current_order_state = insert_order_data(&conn, &order, ordered_products, start_time).expect("Order data insert failed");
+    }
+
+    Ok(current_order_state)
 }
 
 fn get_product_quantity(conn: &pg::Connection, article: &Cart) -> Result<i32> {
@@ -138,7 +155,7 @@ fn insert_customer_data(
     conn: &pg::Connection,
     order: &Order,
     start_time: DateTime<Utc>
-) -> Result<i32> {
+) -> Result<u64> {
     let sql = format!("INSERT INTO products.\"customers\" \
     (name, email, phone, address, city, pin, last_ordered) \
     VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}') \
@@ -151,10 +168,8 @@ fn insert_customer_data(
                       order.customer.pin,
                       start_time
     );
-    let sql_execute = conn.execute(&sql, &[])?;
-
-    println!("Customer data stored: {:?}", sql_execute);
-    Ok(0)
+    let rows_affected = conn.execute(&sql, &[])?;
+    Ok(rows_affected.try_into().unwrap())
 }
 
 fn insert_order_data(
@@ -162,15 +177,15 @@ fn insert_order_data(
     order: &Order,
     ordered_products: &mut HashMap<String, i32>,
     start_time: DateTime<Utc>
-) -> Result<i32> {
+) -> Result<OrderState> {
     let sql = format!("INSERT INTO products.\"orders\" \
-    (timestamp_order_request, product_sum, total_order, customer_id) VALUES ('{}', '{}', '{}', '{}')",
+    (timestamp_order_request, product_sum, total_order, customer_id, order_state) VALUES ('{}', '{}', '{}', '{}', '{:?}')",
                       start_time,
                       serde_json::to_string(&ordered_products).unwrap(),
                       order.order_total,
-                      get_customer_id(&conn, &order.customer).expect("some")
+                      get_customer_id(&conn, &order.customer).unwrap(),
+                      OrderState::Completed,
     );
-    let sql_execute = conn.execute(&sql, &[])?;
-    println!("Order data stored: {:?}", sql_execute);
-    Ok(0)
+    conn.execute(&sql, &[])?;
+    Ok(OrderState::Completed)
 }

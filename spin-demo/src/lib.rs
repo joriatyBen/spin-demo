@@ -34,7 +34,7 @@ struct Order {
     #[serde(rename(deserialize = "orderTotal"))]
     order_total: String,
     #[serde(rename(deserialize = "orderState"))]
-    oder_state: OrderState
+    order_state: OrderState
 }
 
 
@@ -54,8 +54,10 @@ async fn order_request(req: Request) -> Result<Response, Box<dyn Error>> {
 
     match serde_json::from_slice::<Order>(req.body().as_ref()) {
         Ok(order) => {
+            println!("Incoming order request, order state: {:?}", order.order_state);
             let result = handle_order(order, start_time, &mut ordered_products).expect("Handling order failed");
             let end_time: DateTime<Utc> = Utc::now();
+            println!("Order state: {:?}", result);
             Ok(Response::builder()
                 .status(200)
                 .header("content-type", "application/json")
@@ -98,6 +100,7 @@ fn handle_order(
             let sql = format!("UPDATE products.\"products-details\" \
             SET quantity = '{}' WHERE name = '{}'", current_quantity, article.name);
             conn.query(&sql, &[])?;
+            println!("Updated product stock for product: {}", article.name);
 
             ordered_products.insert(article.name.clone(), article.quantity);
             current_order_state = OrderState::Processing;
@@ -169,6 +172,7 @@ fn insert_customer_data(
                       start_time
     );
     let rows_affected = conn.execute(&sql, &[])?;
+    println!("Updated customer data for customer: {:?}", order.customer.name);
     Ok(rows_affected.try_into().unwrap())
 }
 
@@ -187,5 +191,6 @@ fn insert_order_data(
                       OrderState::Completed,
     );
     conn.execute(&sql, &[])?;
+    println!("Stored order data for: {:?}", serde_json::to_string(&ordered_products).unwrap());
     Ok(OrderState::Completed)
 }

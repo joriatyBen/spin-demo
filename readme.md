@@ -1,4 +1,5 @@
 ## Spin demo
+
 1. install spin (nixpkgs) or ```curl -fsSL https://developer.fermyon.com/downloads/install.sh | bash```
 2. install prequesites for Rust: ```spin templates install --git https://github.com/fermyon/spin --update```
 3. `rustup target add wasm32-wasi` (or `nix develop`)
